@@ -48,8 +48,8 @@ curl -X PUT http://example.host:3333/nad/c356/v1.0/Main/Power/on
 
 # MQTT Examples
 
-- send command on topic Command (query model)
-- get reply on topic Messages
+- subscribe topic "NAD/C356/LivingRoom/Messages" for reply
+- publish command on topic "NAD/C356/LivingRoom/Command" (query model)
 
 ```
 
