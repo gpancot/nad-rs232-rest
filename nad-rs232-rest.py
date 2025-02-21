@@ -1,74 +1,66 @@
 #!/usr/bin/python
 
-#    This file is part of nad-rs232-rest.
+#	 This file is part of nad-rs232-rest.
 #
-#    nad-rs232-rest is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    any later version.
+#	 nad-rs232-rest is free software: you can redistribute it and/or modify
+#	 it under the terms of the GNU General Public License as published by
+#	 the Free Software Foundation, either version 3 of the License, or
+#	 any later version.
 #
-#    nad-rs232-rest is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
+#	 nad-rs232-rest is distributed in the hope that it will be useful,
+#	 but WITHOUT ANY WARRANTY; without even the implied warranty of
+#	 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#	 GNU General Public License for more details.
 #
-#    You should have received a copy of the GNU General Public License
-#    along with Foobar.  If not, see <http://www.gnu.org/licenses/>.
+#	 You should have received a copy of the GNU General Public License
+#	 along with Foobar.  If not, see <http://www.gnu.org/licenses/>.
 
 
 import sys
 import logging
+import random
 import serial
-import thread
-import Queue
+import threading
+import queue
 import re
 import paho.mqtt.client as mqtt
 from flask import Flask
+from flask_cors import CORS
 from flask import jsonify
 
 config = {
 	"serialPort": "/dev/ttyUSB0",
 	"serialSpeed": 115200,
-	"mqttBroker": "192.168.128.2",
+	"mqttBroker": "192.168.123.1",
 	"mqttPort": 1883,
 	"restBindIp": "0.0.0.0",
 	"restBindPort": "3333",
-	"deviceType": "C368",
-	"deviceId": "LivingRoom"
+	"deviceType": "C356",
+	"deviceId": "LivingRoom",
+	"User": "username",
+	"Password": "password",
+	"hClient": "hclient"
 }
 
 validMainCommands = [
-	"autosense",
-	"autostandby",
-	"balance",
-	"bass",
-	"brightness",
-	"btworkmode",
-	"controlstandby",
-	"display",
-	"filters",
-	"listeningmode",
 	"model",
 	"mute",
-	"polarity",
 	"power",
-	"preoutsub",
 	"source",
-	"sources",
 	"speakera",
 	"speakerb",
-	"tonedefeat",
-	"treble",
-	"version",
 	"volume",
-	"volumedisplaymode",
 ]
 
 currentValues = {}
 
-requestQueue = Queue.Queue()
-answerQueue = Queue.Queue()
+requestQueue = queue.Queue()
+answerQueue = queue.Queue()
 
+#logger = logging.getLogger('waitress')
+logging.getLogger('waitress')
+# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 ##########
@@ -76,14 +68,14 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 ##########
 
 def stripCommand(cmd):
-	m = re.search("([a-zA-Z0-9]+\.[a-zA-Z0-9\.]+)[?=].*", cmd)
+	m = re.search("([a-zA-Z0-9]+.[a-zA-Z0-9.]+)[?=].*", cmd)
 	if m:
 		return m.group(1)
 	else:
 		return ""
 	
 def stripValue(cmd):
-	m = re.search("[a-zA-Z0-9]+\.[a-zA-Z0-9\.]+[=](.*)", cmd)
+	m = re.search("[a-zA-Z0-9]+.[a-zA-Z0-9.]+[=](.*)", cmd)
 	if m:
 		return m.group(1)
 	else:
@@ -93,15 +85,16 @@ def stripValue(cmd):
 #  MQTT  #
 ##########
 
-def mqtt_on_connect(client, userdata, flags, rc):
+def mqtt_on_connect(client, userdata, flags, reason_code, properties):
 	global config
-	logging.debug("[MQTT] Connected to broker (result code " + str(rc) + ")")
+	logging.info("[MQTT] Connected to broker (reason code=" + str(reason_code) + ")")
 	client.subscribe("NAD/" + config["deviceType"] + "/" + config["deviceId"] + "/Commands")
+	logging.debug("[MQTT] Subscribe NAD/" + config["deviceType"] + "/" + config["deviceId"] + "/Commands")
 
 def mqtt_on_message(client, userdata, msg):
 	global requestQueue
 	logging.debug("[MQTT] Message on '" + str(msg.topic) + "': " + str(msg.payload))
-	requestQueue.put(msg.payload)
+	requestQueue.put(msg.payload.decode())
 	
 
 ##########
@@ -126,7 +119,8 @@ def handleSerial(config, mqttClient, requestQueue, answerQueue, currentValues):
 
 		if(cmd):
 			logging.debug("[SERIAL] Sending request '" + cmd + "'")
-			ser.write('\n' + cmd + '\n')
+			cmd_full = '\n' + cmd + '\n'
+			ser.write(cmd_full.encode())
 			cmd = None
 
 		readByte = ser.read(1)
@@ -138,17 +132,19 @@ def handleSerial(config, mqttClient, requestQueue, answerQueue, currentValues):
 					if(command):
 						currentValues[command] = stripValue(buffer.lower())
 					answerQueue.put(buffer)
+					logging.debug("NAD/" + config["deviceType"] + "/" + config["deviceId"] + "/Messages " + buffer)
 					mqttClient.publish("NAD/" + config["deviceType"] + "/" + config["deviceId"] + "/Messages", buffer)
 				buffer = ""
 			else:
-				buffer = buffer + readByte
+				buffer = buffer + str(readByte, 'utf-8')
 
 ############
 # REST-API #
 ############
 app = Flask(__name__)
+CORS(app)
 
-@app.route('/nad/c368/v1.0/Main/<command>', methods=['GET'])
+@app.route('/nad/c356/v1.0/Main/<command>', methods=['GET'])
 def getMainCommand(command):
 	command = command.lower()
 	if command not in validMainCommands:
@@ -176,7 +172,7 @@ def getMainCommand(command):
 	answerStruct = { "error": 1, "command": "main." + command, "value": None, "errorMsg": "Did not receive a valid answer withing 4 seconds" }
 	return jsonify(answerStruct)
 
-@app.route('/nad/c368/v1.0/Main/<command>/<value>', methods=['PUT'])
+@app.route('/nad/c356/v1.0/Main/<command>/<value>', methods=['PUT'])
 def putMainCommand(command, value):
 	command = command.lower()
 	if command not in validMainCommands:
@@ -206,7 +202,12 @@ def putMainCommand(command, value):
 def main(args):
 	logging.info("Starting mqtt thread")
 	try:
-		client = mqtt.Client()
+
+		# client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id)
+		client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, config["hClient"] + f'-{random.randint(0, 100)}')
+		# client.username_pw_set(username=User, password=Password)
+		client.username_pw_set(username=config["User"], password=config["Password"])
+
 		client.on_connect = mqtt_on_connect
 		client.on_message = mqtt_on_message
 		client.connect(config["mqttBroker"], config["mqttPort"], 60)
@@ -217,12 +218,16 @@ def main(args):
 
 	logging.info("Starting serial port thread")
 	try:
-		thread.start_new_thread(handleSerial, (config, client, requestQueue, answerQueue, currentValues))
+		threading.Thread(target=handleSerial, args=(config, client, requestQueue, answerQueue, currentValues)).start()
 	except Exception as e:
 		logging.critical("Error spawning serial port thread: " + str(e))
 		sys.exit(1)
 
-	app.run(host=config["restBindIp"], port=config["restBindPort"])
+	# app.run(host=config["restBindIp"], port=config["restBindPort"])
+
+	from waitress import serve
+	serve(app, host=config["restBindIp"], port=config["restBindPort"])
+
 
 if __name__ == '__main__':
 	main(sys.argv[1:])	
