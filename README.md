@@ -48,9 +48,7 @@ curl -X PUT http://example.host:3333/nad/c356/v1.0/Main/Power/on
 
 # MQTT Examples
 
-Query the model:
-
-- send command on topic Command
+- send command on topic Command (query model)
 - get reply on topic Messages
 
 ```
